@@ -1,9 +1,10 @@
 "use client";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   ArrowRight,
   Check,
   ChevronDown,
+  ChevronRight,
   CircleHelp,
   Copy,
   Crown,
@@ -14,6 +15,8 @@ import {
   LockKeyhole,
   LogOut,
   Plus,
+  Pause,
+  Play,
   RotateCcw,
   ShieldCheck,
   Timer,
@@ -52,7 +55,30 @@ export function RoomView({
   const [error, setError] = useState("");
   const [copied, setCopied] = useState("");
   const [queueOpen, setQueueOpen] = useState(false);
+  const [attentionPaused, setAttentionPaused] = useState(false);
+  const pendingIds = useRef(new Set<string>());
+  const arrivalRing = useRef<HTMLSpanElement>(null);
   const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const hasArrival = room.pending.some(
+      (entry) => !pendingIds.current.has(entry.id),
+    );
+    pendingIds.current = new Set(room.pending.map((entry) => entry.id));
+    if (
+      !hasArrival ||
+      attentionPaused ||
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    )
+      return;
+    const animation = arrivalRing.current?.animate(
+      [
+        { boxShadow: "0 0 0 0 rgba(109, 53, 182, 0.38)", opacity: 1 },
+        { boxShadow: "0 0 0 14px rgba(109, 53, 182, 0)", opacity: 0 },
+      ],
+      { duration: 1200, easing: "ease-out" },
+    );
+    return () => animation?.cancel();
+  }, [room.pending, attentionPaused]);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 15_000);
     return () => window.clearInterval(timer);
@@ -111,16 +137,13 @@ export function RoomView({
   function addItem(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    void run(
-      async () => {
-        await actions.addItem({
-          name: String(data.get("itemName")),
-          url: String(data.get("itemUrl")),
-        });
-        setQueueOpen(true);
-      },
-      true,
-    );
+    void run(async () => {
+      await actions.addItem({
+        name: String(data.get("itemName")),
+        url: String(data.get("itemUrl")),
+      });
+      setQueueOpen(true);
+    }, true);
   }
   const link =
     typeof window === "undefined"
@@ -129,7 +152,9 @@ export function RoomView({
 
   return (
     <div className="room-shell">
-      <a className="skip-link" href="#main-content">Skip to main content</a>
+      <a className="skip-link" href="#main-content">
+        Skip to main content
+      </a>
       <header className="room-header">
         <div className="room-breadcrumb">
           <Brand onClick={() => setModal("leave")} />
@@ -198,6 +223,11 @@ export function RoomView({
             </button>
           </div>
         )}
+        <p role="status" className="sr-only" aria-atomic="true">
+          {isHost && room.pending.length > 0
+            ? `${room.pending.length} ${room.pending.length === 1 ? "person is" : "people are"} waiting to join: ${room.pending.map((entry) => entry.name).join(", ")}.`
+            : ""}
+        </p>
         <div className="room-layout">
           <div className="voting-column">
             <section className="current-item">
@@ -246,7 +276,7 @@ export function RoomView({
                 {voters.map((member, index) => (
                   <div key={member.id} className="seat">
                     <div
-                      className={`seat-card ${member.hasVoted ? "has-voted" : ""} ${room.revealed ? "flipped" : ""}`}
+                      className={`seat-card ${member.hasVoted ? "has-voted" : ""} ${room.revealed ? "flipped" : ""} ${room.revealed && member.vote !== null && room.config.cards[member.vote]?.length > 3 ? "long-label" : ""}`}
                     >
                       {room.revealed ? (
                         member.vote !== null ? (
@@ -438,7 +468,7 @@ export function RoomView({
                     {room.config.cards.map((card, index) => (
                       <button
                         key={index}
-                        className={`voting-card ${me.vote === index ? "chosen" : ""}`}
+                        className={`voting-card ${me.vote === index ? "chosen" : ""} ${card.length > 3 ? "long-label" : ""}`}
                         aria-label={`Vote ${card}`}
                         aria-pressed={me.vote === index}
                         disabled={disabled || !currentItem}
@@ -448,9 +478,20 @@ export function RoomView({
                           )
                         }
                       >
-                        <span className="card-corner">{card}</span>
+                        {card.length <= 3 && (
+                          <span className="card-corner" aria-hidden="true">
+                            {card}
+                          </span>
+                        )}
                         <strong>{card}</strong>
-                        <span className="card-corner bottom">{card}</span>
+                        {card.length <= 3 && (
+                          <span
+                            className="card-corner bottom"
+                            aria-hidden="true"
+                          >
+                            {card}
+                          </span>
+                        )}
                         {me.vote === index && (
                           <span className="card-chosen-check">
                             <Check size={11} />
@@ -499,12 +540,35 @@ export function RoomView({
           </div>
           <aside className="room-sidebar">
             {isHost && room.pending.length > 0 && (
-              <section className="waiting-panel">
+              <section
+                className={`waiting-panel ${attentionPaused ? "attention-paused" : ""}`}
+                aria-label="Join requests"
+              >
+                <span
+                  className="arrival-ring"
+                  ref={arrivalRing}
+                  aria-hidden="true"
+                />
                 <div className="panel-heading">
                   <h2>
                     <Users size={16} /> At the door
                   </h2>
                   <span className="count-badge">{room.pending.length}</span>
+                  <button
+                    className="icon-button attention-toggle"
+                    type="button"
+                    aria-label={
+                      attentionPaused
+                        ? "Resume waiting-room animation"
+                        : "Pause waiting-room animation"
+                    }
+                    title={
+                      attentionPaused ? "Resume animation" : "Pause animation"
+                    }
+                    onClick={() => setAttentionPaused(!attentionPaused)}
+                  >
+                    {attentionPaused ? <Play size={16} /> : <Pause size={16} />}
+                  </button>
                 </div>
                 <p>Names aren’t verified. Approve people you recognize.</p>
                 {room.pending.map((entry) => (
@@ -539,66 +603,82 @@ export function RoomView({
             )}
             <section className="queue-panel">
               <h2 className="queue-heading">
-                <button type="button" className="queue-disclosure" aria-expanded={queueOpen} aria-controls="room-queue-items" onClick={() => setQueueOpen(!queueOpen)}>
-                  <ListOrdered size={20} />
-                  <span>Item queue</span>
-                  <span className="count-badge">{room.items.length}</span>
-                  <ChevronDown size={20} className="disclosure-chevron" />
-                </button>
+                <ListOrdered size={20} />
+                <span>Item queue</span>
+                <span className="count-badge">{room.items.length}</span>
               </h2>
-              <p className="queue-preview">
-                {room.items.length > 1 ? <><strong>{room.items.length - 1} up next</strong><span>Next: {room.items[1].name}</span></> : currentItem ? "No more items queued." : "Add an item to start the conversation."}
-              </p>
+              <button
+                type="button"
+                className="queue-disclosure"
+                aria-label={`${queueOpen ? "Hide" : "Show"} queued items`}
+                aria-expanded={queueOpen}
+                aria-controls="room-queue-items"
+                onClick={() => setQueueOpen(!queueOpen)}
+              >
+                <ChevronRight size={20} className="queue-chevron" />
+                <span className="queue-preview">
+                  {room.items.length > 1 ? (
+                    <>
+                      <strong>{room.items.length - 1} up next</strong>
+                      <span>Next: {room.items[1].name}</span>
+                    </>
+                  ) : currentItem ? (
+                    "No more items queued."
+                  ) : (
+                    "Add an item to start the conversation."
+                  )}
+                </span>
+              </button>
               <div id="room-queue-items" hidden={!queueOpen}>
-              <ol className="queue-list">
-                {room.items.map((item, index) => (
-                  <li key={item.id} className={index === 0 ? "current" : ""}>
-                    <span className="queue-number">
-                      {index === 0 ? (
-                        <span className="status-dot" />
-                      ) : (
-                        String(index + 1).padStart(2, "0")
-                      )}
-                    </span>
-                    <div>
-                      <span className="queue-item-name">{item.name}</span>
-                      {index === 0 && (
-                        <span className="queue-current-label">
-                          Discussing now
-                        </span>
-                      )}
-                      {item.url && (
-                        <a
-                          href={item.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                <ol className="queue-list">
+                  {room.items.map((item, index) => (
+                    <li key={item.id} className={index === 0 ? "current" : ""}>
+                      <span className="queue-number">
+                        {index === 0 ? (
+                          <span className="status-dot" />
+                        ) : (
+                          String(index + 1).padStart(2, "0")
+                        )}
+                      </span>
+                      <div>
+                        <span className="queue-item-name">{item.name}</span>
+                        {index === 0 && (
+                          <span className="queue-current-label">
+                            Discussing now
+                          </span>
+                        )}
+                        {item.url && (
+                          <a
+                            href={item.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            Open link <ExternalLink size={11} />
+                          </a>
+                        )}
+                      </div>
+                      {isHost && index > 0 && (
+                        <button
+                          className="queue-remove icon-button"
+                          disabled={disabled}
+                          aria-label={`Remove ${item.name}`}
+                          onClick={() =>
+                            void run(() => actions.removeItem(item.id))
+                          }
                         >
-                          Open link <ExternalLink size={11} />
-                        </a>
+                          <X size={14} />
+                        </button>
                       )}
-                    </div>
-                    {isHost && index > 0 && (
-                      <button
-                        className="queue-remove icon-button"
-                        disabled={disabled}
-                        aria-label={`Remove ${item.name}`}
-                        onClick={() =>
-                          void run(() => actions.removeItem(item.id))
-                        }
-                      >
-                        <X size={14} />
-                      </button>
-                    )}
-                  </li>
-                ))}
-              </ol>
-              {room.items.length === 0 && (
-                <div className="queue-empty">
-                  <ListOrdered size={28} />
-                  <p>A little room for your next idea.</p>
-                </div>
-              )}
-              <p className="queue-note">Completed items aren’t saved.</p>
+                    </li>
+                  ))}
+                </ol>
+                {room.items.length === 0 && (
+                  <div className="queue-empty">
+                    <ListOrdered size={28} />
+                    <p>A little room for your next idea.</p>
+                  </div>
+                )}
+                <p className="queue-note">Completed items aren’t saved.</p>
               </div>
               <button
                 className="button queue-add"
@@ -627,19 +707,60 @@ export function RoomView({
                   }
                 >
                   <span className="switch-thumb" aria-hidden="true" />
-                  <span className={`switch-state ${!room.locked ? "selected" : ""}`}><UnlockKeyhole size={18} /> Open</span>
-                  <span className={`switch-state ${room.locked ? "selected" : ""}`}><LockKeyhole size={18} /> Locked</span>
+                  <span
+                    className={`switch-state ${!room.locked ? "selected" : ""}`}
+                  >
+                    <UnlockKeyhole size={18} /> Open
+                  </span>
+                  <span
+                    className={`switch-state ${room.locked ? "selected" : ""}`}
+                  >
+                    <LockKeyhole size={18} /> Locked
+                  </span>
                 </button>
               ) : (
-                <p className="access-status">{room.locked ? <LockKeyhole size={18} /> : <UnlockKeyhole size={18} />}{room.locked ? "Room locked" : "Room open"}</p>
+                <p className="access-status">
+                  {room.locked ? (
+                    <LockKeyhole size={18} />
+                  ) : (
+                    <UnlockKeyhole size={18} />
+                  )}
+                  {room.locked ? "Room locked" : "Room open"}
+                </p>
               )}
               <p id="lock-help" role="status">
-                {room.locked ? "Locked. New people can’t join or request access." : room.requireApproval ? "Open for requests. You approve each person before they enter." : "Open. Anyone with the invitation can join."}
+                {room.locked
+                  ? "Locked. New people can’t join or request access."
+                  : room.requireApproval
+                    ? `Open for requests. ${isHost ? "You approve" : "The host approves"} each person before they enter.`
+                    : "Open. Anyone with the invitation can join."}
               </p>
               <div className="safety-rule" />
-              <div className="safety-title encryption-title"><ShieldCheck size={19} /><h3>End-to-end encrypted</h3></div>
-              <p>We and our hosting providers don’t have the keys to read your room content.</p>
-              <details className="disclosure room-retention"><summary><span>When the room ends</span><ChevronDown size={18} className="disclosure-chevron" /></summary><div className="disclosure-body"><p>Active room data is deleted. Any room content retained in provider backups stays encrypted and unreadable without your invitation key.</p><p>Connection metadata is separate. People in the room may keep their own copies.</p></div></details>
+              <div className="safety-title encryption-title">
+                <ShieldCheck size={19} />
+                <h3>End-to-end encrypted</h3>
+              </div>
+              <p>
+                We and our hosting providers don’t have the keys to read your
+                room content.
+              </p>
+              <details className="disclosure room-retention">
+                <summary>
+                  <span>When the room ends</span>
+                  <ChevronDown size={18} className="disclosure-chevron" />
+                </summary>
+                <div className="disclosure-body">
+                  <p>
+                    Active room data is deleted. Any room content retained in
+                    provider backups stays encrypted and unreadable without your
+                    invitation key.
+                  </p>
+                  <p>
+                    Connection metadata is separate. People in the room may keep
+                    their own copies.
+                  </p>
+                </div>
+              </details>
               <button className="text-link" onClick={() => setModal("privacy")}>
                 How E2EE protects your room <ArrowRight size={15} />
               </button>
@@ -670,7 +791,7 @@ export function RoomView({
                 placeholder="e.g. Add a simpler checkout flow"
                 maxLength={160}
                 required
-                autoFocus
+                data-autofocus
               />
             </label>
             <label>
@@ -789,7 +910,21 @@ export function RoomView({
               ? "Ending the room removes its active data and closes it for everyone. There’s no saved history to come back to."
               : "Your name and vote will be removed from the room. You can rejoin with the invitation."}
           </p>
-          {isHost && <details className="disclosure"><summary><span>What happens to stored data?</span><ChevronDown size={18} className="disclosure-chevron" /></summary><div className="disclosure-body"><p>Any room content in provider backups stays encrypted. Providers don’t have the key to read it. Connection metadata and copies made by participants may remain.</p></div></details>}
+          {isHost && (
+            <details className="disclosure">
+              <summary>
+                <span>What happens to stored data?</span>
+                <ChevronDown size={18} className="disclosure-chevron" />
+              </summary>
+              <div className="disclosure-body">
+                <p>
+                  Any room content in provider backups stays encrypted.
+                  Providers don’t have the key to read it. Connection metadata
+                  and copies made by participants may remain.
+                </p>
+              </div>
+            </details>
+          )}
           {error && (
             <p className="form-error" role="alert">
               {error}

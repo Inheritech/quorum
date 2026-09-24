@@ -13,9 +13,11 @@ test("landing is responsive, decks change, and invite links select join", async 
   expect(response?.headers()["content-security-policy"]).not.toMatch(
     /script-src[^;]*unsafe-inline/,
   );
-  await page.getByRole("button", { name: /T-shirt sizes/ }).click();
+  await page.getByLabel("Your name", { exact: true }).fill("Alex");
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await page.getByRole("radio", { name: /T-shirt sizes/ }).check();
   await expect(page.locator(".mini-deck")).toContainText("XXL");
-  await page.getByRole("button", { name: "Custom", exact: true }).click();
+  await page.getByRole("radio", { name: "Custom", exact: true }).check();
   await page
     .getByRole("textbox", { name: /^Card values/ })
     .fill("Tiny, Small, Big");
@@ -52,6 +54,23 @@ test("practice supports voting, reveal, queue advancement, observation, and admi
   await expect(
     page.getByRole("heading", { name: "The next good thing" }),
   ).toBeVisible();
+  const queue = page.getByRole("button", { name: "Show queued items" });
+  await expect(queue).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator(".queue-list")).toBeHidden();
+  await expect(
+    page.getByRole("button", { name: "Add item", exact: true }),
+  ).toBeVisible();
+  const lock = page.getByRole("switch", { name: "Lock room" });
+  await expect(lock).not.toBeChecked();
+  await lock.focus();
+  await page.keyboard.press("Space");
+  await expect(lock).toBeChecked();
+  await expect(page.locator("#lock-help")).toContainText(
+    "New people can’t join",
+  );
+  await page.keyboard.press("Space");
+  await expect(lock).not.toBeChecked();
+  await expect(lock).toBeFocused();
   await page.getByRole("button", { name: "Admit Casey" }).click();
   await expect(page.getByRole("heading", { name: "At the door" })).toHaveCount(
     0,
@@ -125,11 +144,19 @@ test("security disclosure and dialogs work with keyboard navigation", async ({
   await page.goto("/");
   await page.getByRole("button", { name: "Privacy & room security" }).click();
   await expect(page.getByRole("dialog")).toContainText(
-    "Provider logs, backups",
+    "don’t receive the keys needed to read it",
   );
+  await page.getByText("Encryption and deletion", { exact: true }).click();
+  await expect(page.getByRole("dialog")).toContainText(
+    "backups stays encrypted and unreadable without your invitation key",
+  );
+  await page.getByText("Encryption details", { exact: true }).click();
   await expect(page.getByRole("dialog")).toContainText("132 bits");
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Privacy & room security" }),
+  ).toBeFocused();
   await page.getByRole("button", { name: "Try a practice room" }).click();
   await page.getByRole("button", { name: "Invite people" }).click();
   await expect(page.getByRole("dialog")).toContainText(

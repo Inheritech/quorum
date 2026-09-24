@@ -4,7 +4,7 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   use: {
-    baseURL: "http://127.0.0.1:3100",
+    baseURL: process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:3100",
     channel: "msedge",
     headless: true,
     launchOptions: { args: ["--disable-crash-reporter", "--disable-breakpad"] },

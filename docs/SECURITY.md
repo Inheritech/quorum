@@ -47,6 +47,10 @@ The server cannot validate encrypted card values. It validates envelope format a
 
 ## Retention behavior
 
+Encryption and retention describe different guarantees. Room content is encrypted before it reaches Convex; persisted content and copies in provider backups are ciphertext, unreadable without the invitation-derived room key. The operator and providers do not receive that key through the application. Retaining ciphertext is not equivalent to retaining readable submissions. Connection and room-operation metadata are separate and are not end-to-end encrypted.
+
+This is not cryptographic erasure: invitation holders can retain their keys, and a retained key can still decrypt matching ciphertext later. The shared-key design has no forward secrecy. These boundaries do not negate content confidentiality from a provider without the key; they qualify the stronger claim that no data exists anywhere after a room ends.
+
 - Active room content, participant capabilities (hashed), pending requests, queue, and votes occupy one room record.
 - Host ending the room atomically deletes that record and cancels the expiry task. A leaving participant’s data is removed; a waiting applicant can cancel.
 - Each room has an absolute server-selected deadline of 1, 2, 4, or 8 hours. Reads and mutations reject expired rooms even if cleanup has not run.

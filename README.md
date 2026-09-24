@@ -13,11 +13,14 @@ An anonymous, end-to-end encrypted estimation app built with Next.js and Convex,
 - Up to 32 admitted people and 32 waiting requests per room.
 - End-to-end encryption of room settings, display names, card labels, item names/links, and votes.
 - Immediate active-record deletion when the host ends the room; automatic 1/2/4/8-hour expiry, plus a cleanup backstop.
-- Responsive interface, keyboard-accessible dialogs, reduced-motion support, and an explicitly labeled, in-memory practice room.
+- Purple interface with a three-step room wizard, expandable queue, a two-state room-lock switch, and subtle waiting-request animations with pause and reduced-motion support.
+- Responsive layouts, keyboard navigation, accessible dialogs, WCAG 2.2 AA automated checks, and an explicitly labeled, in-memory practice room. See [accessibility verification](docs/ACCESSIBILITY.md) for scope and remaining audit work.
 
 ## Local setup
 
 Use Node.js 22+ and pnpm. Dependency versions and the lockfile are checked in. Package caches are configured inside the repository.
+
+Use the pnpm version pinned in `package.json` (11.19.0). `pnpm-workspace.yaml` explicitly applies a 24-hour minimum release age and allows the `esbuild` and `unrs-resolver` install scripts. Generate lockfile changes with that same policy before committing; CI uses a frozen install and will reject releases that are too new. Do not disable the age policy or skip all install scripts to work around an install error.
 
 ```sh
 pnpm install --frozen-lockfile
@@ -83,6 +86,8 @@ On Windows, set `TEMP` and `TMP` to `<repository>/.tmp` before browser tests to 
 
 The backend suite is an emulator test, not proof that a provisioned production deployment works. Complete the real two-browser smoke test after configuration.
 
+Set `PLAYWRIGHT_BASE_URL` to test an existing local server (for example `http://localhost:3001`). Browser tests include wizard validation and preserved choices, keyboard focus, both lock states, collapsed queues, axe checks, 320px reflow, 200% text sizing, and increased text spacing.
+
 ## Architecture
 
 | Area                                                 | Files                                              |
@@ -99,7 +104,7 @@ Convex stores each room as a single bounded document. Mutations atomically updat
 
 ## Retention and limitations
 
-This application provides **ephemeral encrypted rooms**, not an all-infrastructure zero-retention guarantee. Convex persists ciphertext while a room is active. Providers can retain operational metadata and backups. An invitation holder can keep keys or copy content, and deletion cannot revoke those copies.
+This application provides **ephemeral encrypted rooms**, not an all-infrastructure zero-retention guarantee. Convex persists ciphertext while a room is active. Any room content retained in provider backups remains encrypted and unreadable without the invitation key; the application does not give that key to the operator or providers. Operational metadata is separate. An invitation holder can keep keys or copy content, and deletion cannot revoke those copies. Quorum uses a shared room key, without WhatsApp's identity verification or forward secrecy.
 
 Credentials and plaintext are held in JavaScript memory, with no app cookies, localStorage, sessionStorage, IndexedDB, or persisted room history. Refreshing loses the participant capability and host controls. A host must keep their tab open or end the room explicitly; abandoned rooms expire at their original deadline. No recovery key is stored on the server. Closing a browser tab is not a reliable deletion trigger. Browser/OS swap, crash dumps, extensions, clipboard history, and link-sharing services are outside the app’s control.
 

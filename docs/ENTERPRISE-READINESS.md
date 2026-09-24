@@ -6,7 +6,7 @@ Research date: 2026-09-24. This is an engineering assessment of the application 
 
 The requested Vercel + Convex stack can support **end-to-end encrypted, short-lived sessions**. It cannot truthfully promise that no data is ever persisted: Convex is a persistent database, and vendors retain operational information. A deleted document is not evidence that every replica, transaction record, backup, diagnostic artifact, or downstream copy has been erased.
 
-Keep the product claim narrow: encrypted session content, no application history, no analytics, explicit deletion, and bounded expiry. The UI explains that provider logs/backups and participant copies may remain, without claiming certification or using compliance as product copy.
+The product distinguishes confidentiality from retention: room content is encrypted before upload, and retained provider copies remain ciphertext unreadable without the invitation-derived key. The application does not give the operator or providers that key. Metadata, including connection and activity information, is separate. The UI leads with that protection, explains deletion on demand, and does not claim certification or use compliance as product copy.
 
 If a customer requires literally zero persistent session data anywhere, this architecture does not meet that definition. Options to investigate are an audited ephemeral relay or peer-to-peer transport with browser-held state, memory-only signaling, and negotiated metadata retention. Convex could not remain the persistence layer for those sessions. Such an alternative has reconnection, durability, host availability, networking, and abuse-control tradeoffs; it has not been implemented here.
 
