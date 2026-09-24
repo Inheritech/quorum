@@ -1,6 +1,7 @@
 import { ConvexError } from "convex/values";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
+import { isPresent } from "../src/lib/presence";
 
 export function fail(message: string): never {
   throw new ConvexError(message);
@@ -43,7 +44,8 @@ export async function authorize(
   if (!room) fail("This room has ended or expired.");
   const hash = await tokenHash(token);
   const member = room.participants.find((entry) => entry.tokenHash === hash);
-  if (!member) fail("You’re no longer a member of this room.");
+  if (!member || !isPresent(member.lastSeen))
+    fail("You’re no longer a member of this room.");
   return { room, member };
 }
 export function hostOnly(

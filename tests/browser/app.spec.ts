@@ -54,6 +54,7 @@ test("practice supports voting, reveal, queue advancement, observation, and admi
   await expect(
     page.getByRole("heading", { name: "The next good thing" }),
   ).toBeVisible();
+  await expect(page).toHaveTitle("The next good thing · Quorum");
   const queue = page.getByRole("button", { name: "Show queued items" });
   await expect(queue).toHaveAttribute("aria-expanded", "false");
   await expect(page.locator(".queue-list")).toBeHidden();
@@ -84,6 +85,12 @@ test("practice supports voting, reveal, queue advancement, observation, and admi
     fullPage: true,
   });
   await page.getByRole("button", { name: "Reveal cards" }).click();
+  await expect(page.locator(".reveal-countdown")).toHaveText("3");
+  await expect(page.locator(".results-panel")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Revealing…", exact: true }),
+  ).toBeDisabled();
+  await expect(page.locator(".seat-card.flipped")).toHaveCount(0);
   await expect(page.locator(".results-panel")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Next item", exact: true }),
@@ -136,6 +143,45 @@ test("practice supports voting, reveal, queue advancement, observation, and admi
   await expect(
     page.getByRole("heading", { name: /Good estimates start/ }),
   ).toBeVisible();
+  await expect(page).not.toHaveTitle("The next good thing · Quorum");
+});
+
+test("people removal confirms intent and door sound can be muted", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Try a practice room" }).click();
+  const sound = page.getByRole("button", { name: "Arrival sound" });
+  await expect(sound).toHaveAttribute("aria-pressed", "true");
+  await sound.click();
+  await expect(sound).toHaveAttribute("aria-pressed", "false");
+  await expect(sound).toContainText("Sound off");
+  const people = page.getByRole("button", { name: "People 5" });
+  await people.click();
+  await page.getByRole("button", { name: "Remove Alex", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Keep in room" }),
+  ).toBeFocused();
+  await page.getByRole("button", { name: "Keep in room" }).click();
+  await expect(page.locator(".people-list li")).toHaveCount(5);
+  await page.getByRole("button", { name: "Remove Alex", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Remove person", exact: true })
+    .click();
+  await expect(page.locator(".people-list li")).toHaveCount(4);
+  await expect(page.getByRole("dialog")).toContainText("Alex was removed.");
+  await expect(
+    page.getByRole("button", { name: "Done", exact: true }),
+  ).toBeFocused();
+  await page.getByRole("button", { name: "Remove Riley", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Remove person", exact: true })
+    .click();
+  await expect(page.locator(".people-list li")).toHaveCount(3);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: "People 3" })).toBeFocused();
+  await expect(page.locator(".seat-name")).not.toContainText(["Alex"]);
+  await expect(page.locator(".observers")).toHaveCount(0);
 });
 
 test("security disclosure and dialogs work with keyboard navigation", async ({

@@ -24,10 +24,13 @@ export default defineSchema({
     revealed: v.boolean(),
     locked: v.boolean(),
     expiresAt: v.number(),
+    presenceCheckAt: v.optional(v.number()),
+    hostChangedAt: v.optional(v.number()),
     cleanupId: v.optional(v.id("_scheduled_functions")),
   })
     .index("by_access", ["accessHash"])
-    .index("by_expiry", ["expiresAt"]),
+    .index("by_expiry", ["expiresAt"])
+    .index("by_presence", ["presenceCheckAt"]),
   limits: defineTable({
     key: v.string(),
     count: v.number(),

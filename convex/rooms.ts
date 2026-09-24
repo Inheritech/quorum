@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { item } from "./schema";
+import { isPresent, PRESENCE_TIMEOUT_MS } from "../src/lib/presence";
 import {
   assertCiphertext,
   assertHash,
@@ -29,7 +30,7 @@ export const create = mutation({
     requireApproval: v.boolean(),
     role: v.union(v.literal("voter"), v.literal("observer")),
   },
-  handler: async (ctx, args): Promise<null> => {
+  handler: async (ctx, args) => {
     assertHash(args.accessHash);
     assertId(args.memberId);
     assertCiphertext(args.name);
@@ -69,6 +70,7 @@ export const create = mutation({
       revealed: false,
       locked: false,
       expiresAt,
+      presenceCheckAt: Date.now() + PRESENCE_TIMEOUT_MS,
     });
     const cleanupId = await ctx.scheduler.runAt(
       expiresAt,
@@ -76,7 +78,11 @@ export const create = mutation({
       { roomId },
     );
     await ctx.db.patch(roomId, { cleanupId });
-    return null;
+    return {
+      memberId: args.memberId,
+      expiresAt,
+      recoverUntil: Math.min(expiresAt, Date.now() + PRESENCE_TIMEOUT_MS),
+    };
   },
 });
 
@@ -96,12 +102,25 @@ export const join = mutation({
         "That room is unavailable. Check the code or ask the host for a new room.",
       );
     const hash = await tokenHash(args.token);
-    if (
-      [...room.participants, ...room.pending].some(
-        (member) => member.tokenHash === hash,
-      )
-    )
-      return;
+    const existing = [...room.participants, ...room.pending].find(
+      (member) => member.tokenHash === hash,
+    );
+    if (existing) {
+      if (!isPresent(existing.lastSeen))
+        fail(
+          "Your previous session expired. Join again to start a new session.",
+        );
+      return {
+        memberId: existing.id,
+        expiresAt: room.expiresAt,
+        recoverUntil: Math.min(
+          room.expiresAt,
+          existing.lastSeen + PRESENCE_TIMEOUT_MS,
+        ),
+      };
+    }
+    if (!room.participants.some((member) => isPresent(member.lastSeen)))
+      fail("This room has no connected participants. Ask for a new room.");
     if (room.locked) fail("This room is locked. Ask the host to unlock it.");
     if (room.participants.length >= 32 || room.pending.length >= 32)
       fail("This room is full. Please try again later.");
@@ -126,6 +145,11 @@ export const join = mutation({
         },
       ],
     });
+    return {
+      memberId: args.memberId,
+      expiresAt: room.expiresAt,
+      recoverUntil: Math.min(room.expiresAt, Date.now() + PRESENCE_TIMEOUT_MS),
+    };
   },
 });
 
@@ -135,9 +159,13 @@ export const read = query({
     const room = await findRoom(ctx, args.accessHash);
     if (!room) return null;
     const hash = await tokenHash(args.token);
-    const me = room.participants.find((member) => member.tokenHash === hash);
+    const me = room.participants.find(
+      (member) => member.tokenHash === hash && isPresent(member.lastSeen),
+    );
     if (!me)
-      return room.pending.some((member) => member.tokenHash === hash)
+      return room.pending.some(
+        (member) => member.tokenHash === hash && isPresent(member.lastSeen),
+      )
         ? { status: "pending" as const, expiresAt: room.expiresAt }
         : null;
     // Explicit projection: never send other votes before reveal, even to the host.
@@ -146,6 +174,7 @@ export const read = query({
       status: "ready" as const,
       config: room.config,
       hostId: room.hostId,
+      hostChangedAt: room.hostChangedAt ?? null,
       round: room.round,
       revealed: room.revealed,
       requireApproval: room.requireApproval,
@@ -312,12 +341,42 @@ export const setLocked = mutation({
 export const heartbeat = mutation({
   args: credentials,
   handler: async (ctx, args) => {
+    const room = await findRoom(ctx, args.accessHash);
+    if (!room) return null;
+    const hash = await tokenHash(args.token);
+    const field = room.participants.some((entry) => entry.tokenHash === hash)
+      ? "participants"
+      : "pending";
+    const member = room[field].find((entry) => entry.tokenHash === hash);
+    if (!member || !isPresent(member.lastSeen)) return null;
+    const now = Date.now();
+    const lastSeen = now - member.lastSeen < 15_000 ? member.lastSeen : now;
+    if (lastSeen !== member.lastSeen)
+      await ctx.db.patch(room._id, {
+        [field]: room[field].map((entry) =>
+          entry.id === member.id ? { ...entry, lastSeen } : entry,
+        ),
+      });
+    return {
+      memberId: member.id,
+      expiresAt: room.expiresAt,
+      recoverUntil: Math.min(room.expiresAt, lastSeen + PRESENCE_TIMEOUT_MS),
+    };
+  },
+});
+
+export const removeMember = mutation({
+  args: { ...credentials, memberId: v.string() },
+  handler: async (ctx, args) => {
     const { room, member } = await authorize(ctx, args.accessHash, args.token);
-    if (Date.now() - member.lastSeen < 15_000) return;
+    hostOnly(room, member);
+    if (args.memberId === room.hostId)
+      fail("Use End room to close the room for everyone.");
     await ctx.db.patch(room._id, {
-      participants: room.participants.map((entry) =>
-        entry.id === member.id ? { ...entry, lastSeen: Date.now() } : entry,
+      participants: room.participants.filter(
+        (entry) => entry.id !== args.memberId,
       ),
+      pending: room.pending.filter((entry) => entry.id !== args.memberId),
     });
   },
 });
@@ -335,6 +394,7 @@ export const leave = mutation({
       });
       return;
     }
+    if (!isPresent(member.lastSeen)) return;
     if (room.hostId === member.id) {
       if (room.cleanupId) await ctx.scheduler.cancel(room.cleanupId);
       await ctx.db.delete(room._id);
@@ -355,12 +415,14 @@ export const admit = mutation({
     hostOnly(room, member);
     const applicant = room.pending.find((entry) => entry.id === args.memberId);
     if (!applicant) return;
+    if (args.allow && !isPresent(applicant.lastSeen))
+      fail("This person disconnected. They’ll need to request to join again.");
     if (args.allow && room.participants.length >= 32)
       fail("This room has reached its 32-person limit.");
     await ctx.db.patch(room._id, {
       pending: room.pending.filter((entry) => entry.id !== args.memberId),
       participants: args.allow
-        ? [...room.participants, { ...applicant, lastSeen: Date.now() }]
+        ? [...room.participants, applicant]
         : room.participants,
     });
   },

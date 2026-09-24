@@ -622,8 +622,8 @@ export function Landing({
                             </select>
                           </label>
                           <p className="helper-text">
-                            You can end the room sooner. Refreshing loses your
-                            session and host controls.
+                            You can end the room sooner. Refreshing this tab
+                            restores your place while your session is active.
                           </p>
                         </div>
                       </details>

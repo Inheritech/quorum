@@ -13,6 +13,7 @@ export function PracticeRoom({ onExit }: { onExit: () => void }) {
       cards: [...DECKS.fibonacci.cards],
     },
     hostId: "you",
+    hostChangedAt: null,
     round: 1,
     revealed: false,
     locked: false,
@@ -148,6 +149,11 @@ export function PracticeRoom({ onExit }: { onExit: () => void }) {
               },
             ]
           : current.participants,
+      })),
+    removeMember: async (id) =>
+      setRoom((current) => ({
+        ...current,
+        participants: current.participants.filter((member) => member.id !== id),
       })),
     leave: async () => onExit(),
   };

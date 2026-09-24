@@ -7,6 +7,9 @@ export type Session = {
   accessHash: string;
   token: string;
   memberId: string;
+  expiresAt: number;
+  recoverUntil: number;
+  recoveryAvailable?: boolean;
 };
 export type Member = {
   id: string;
@@ -19,6 +22,7 @@ export type Member = {
 export type Room = {
   config: RoomConfig;
   hostId: string;
+  hostChangedAt: number | null;
   round: number;
   revealed: boolean;
   locked: boolean;
@@ -38,5 +42,6 @@ export type RoomActions = {
   setRole: (role: "voter" | "observer") => Promise<void>;
   setLocked: (locked: boolean) => Promise<void>;
   admit: (id: string, allow: boolean) => Promise<void>;
+  removeMember: (id: string) => Promise<void>;
   leave: () => Promise<void>;
 };

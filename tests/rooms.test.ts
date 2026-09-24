@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { convexTest } from "convex-test";
 import schema from "../convex/schema";
 import { api, internal } from "../convex/_generated/api";
+import { recoverSession } from "../src/lib/session-recovery";
+import { PRESENCE_TIMEOUT_MS } from "../src/lib/presence";
 import {
   generateRoomCode,
   generateToken,
@@ -329,6 +331,240 @@ describe("queue progression and retention", () => {
     const t = newTest();
     await setup(t);
     await vi.advanceTimersByTimeAsync(3_600_001);
+    await t.finishInProgressScheduledFunctions();
+    expect(await t.run((ctx) => ctx.db.query("rooms").collect())).toEqual([]);
+  });
+});
+
+describe("presence, removal, and session recovery", () => {
+  it("restores the same capability and encrypted vote while locked, without joining again", async () => {
+    const t = newTest(),
+      context = await setup(t),
+      guest = await join(t, context);
+    await vote(t, context, guest, 3);
+    await t.mutation(api.rooms.setLocked, { ...context.host, locked: true });
+    const receipt = await t.mutation(api.rooms.heartbeat, guest.credentials);
+    if (!receipt) throw new Error("Missing presence receipt");
+    vi.setSystemTime(Date.now() + 90_000);
+    const recovered = await recoverSession(
+      { ...receipt, code: context.code, token: guest.credentials.token },
+      (credentials) => t.mutation(api.rooms.heartbeat, credentials),
+    );
+    expect(recovered).toMatchObject({
+      memberId: guest.memberId,
+      token: guest.credentials.token,
+      recoverUntil: Date.now() + PRESENCE_TIMEOUT_MS,
+    });
+    const view = await t.query(api.rooms.read, guest.credentials);
+    if (view?.status !== "ready" || !recovered)
+      throw new Error("Expected recovered member");
+    expect(view.participants).toHaveLength(2);
+    const me = view.participants.find((entry) => entry.id === guest.memberId)!;
+    expect(
+      await unseal(
+        recovered.key,
+        me.vote!,
+        `${context.accessHash}:vote:${guest.memberId}:1`,
+      ),
+    ).toBe(3);
+    expect(
+      await unseal(
+        recovered.key,
+        me.name,
+        `${context.accessHash}:name:${guest.memberId}`,
+      ),
+    ).toBe("Guest");
+    await t.mutation(api.rooms.setRole, {
+      ...guest.credentials,
+      role: "observer",
+    });
+    expect(
+      (await t.query(api.rooms.read, guest.credentials))?.participants?.find(
+        (entry) => entry.id === guest.memberId,
+      )?.role,
+    ).toBe("observer");
+  });
+
+  it("renews pending sessions and restores host authority, without changing admission", async () => {
+    const t = newTest(),
+      context = await setup(t, true),
+      guest = await join(t, context);
+    vi.setSystemTime(Date.now() + 90_000);
+    const pending = await t.mutation(api.rooms.heartbeat, guest.credentials);
+    const host = await t.mutation(api.rooms.heartbeat, context.host);
+    expect(pending?.recoverUntil).toBe(Date.now() + PRESENCE_TIMEOUT_MS);
+    expect(host?.memberId).toBe(context.hostId);
+    expect((await t.query(api.rooms.read, guest.credentials))?.status).toBe(
+      "pending",
+    );
+    vi.setSystemTime(Date.now() + 40_000);
+    await t.mutation(internal.cleanup.presence, {});
+    await t.mutation(api.rooms.setLocked, { ...context.host, locked: true });
+    await t.mutation(api.rooms.admit, {
+      ...context.host,
+      memberId: guest.memberId,
+      allow: true,
+    });
+    expect((await t.query(api.rooms.read, guest.credentials))?.status).toBe(
+      "ready",
+    );
+  });
+
+  it("throttles frequent heartbeats without pretending to renew the deadline", async () => {
+    const t = newTest(),
+      context = await setup(t);
+    const first = await t.mutation(api.rooms.heartbeat, context.host);
+    vi.setSystemTime(Date.now() + 10_000);
+    expect(await t.mutation(api.rooms.heartbeat, context.host)).toEqual(first);
+    vi.setSystemTime(Date.now() + 10_000);
+    expect(
+      (await t.mutation(api.rooms.heartbeat, context.host))?.recoverUntil,
+    ).toBe(Date.now() + PRESENCE_TIMEOUT_MS);
+  });
+
+  it("rejects stale capabilities before cleanup and transfers hosting to the oldest fresh person", async () => {
+    const t = newTest(),
+      context = await setup(t),
+      staleGuest = await join(t, context),
+      successor = await join(t, context, "observer"),
+      guest = await join(t, context);
+    vi.setSystemTime(Date.now() + 90_000);
+    await t.mutation(api.rooms.heartbeat, successor.credentials);
+    await t.mutation(api.rooms.heartbeat, guest.credentials);
+    vi.setSystemTime(Date.now() + 30_000);
+    expect(await t.mutation(api.rooms.heartbeat, context.host)).toBeNull();
+    expect(await t.query(api.rooms.read, context.host)).toBeNull();
+    await expect(
+      t.mutation(api.rooms.setLocked, { ...context.host, locked: true }),
+    ).rejects.toThrow("no longer a member");
+    await t.mutation(api.rooms.leave, context.host);
+    await t.mutation(internal.cleanup.presence, {});
+    const view = await t.query(api.rooms.read, successor.credentials);
+    expect(view).toMatchObject({
+      hostId: successor.memberId,
+      hostChangedAt: Date.now(),
+    });
+    expect(view?.participants?.map((entry) => entry.id)).toEqual([
+      successor.memberId,
+      guest.memberId,
+    ]);
+    expect(
+      await t.mutation(api.rooms.heartbeat, staleGuest.credentials),
+    ).toBeNull();
+    expect(await t.query(api.rooms.read, guest.credentials)).toMatchObject({
+      hostId: successor.memberId,
+      hostChangedAt: Date.now(),
+    });
+    await t.mutation(api.rooms.setLocked, {
+      ...successor.credentials,
+      locked: true,
+    });
+    await expect(
+      t.mutation(api.rooms.setLocked, { ...context.host, locked: false }),
+    ).rejects.toThrow("no longer a member");
+  });
+
+  it("only lets the host remove others and invalidates removed recovery credentials", async () => {
+    const t = newTest(),
+      context = await setup(t),
+      guest = await join(t, context),
+      other = await join(t, context);
+    await vote(t, context, guest, 2);
+    const receipt = await t.mutation(api.rooms.heartbeat, guest.credentials);
+    if (!receipt) throw new Error("Missing receipt");
+    await expect(
+      t.mutation(api.rooms.removeMember, {
+        ...guest.credentials,
+        memberId: other.memberId,
+      }),
+    ).rejects.toThrow("Only the host");
+    await expect(
+      t.mutation(api.rooms.removeMember, {
+        ...context.host,
+        memberId: context.hostId,
+      }),
+    ).rejects.toThrow("End room");
+    await t.mutation(api.rooms.removeMember, {
+      ...context.host,
+      memberId: guest.memberId,
+    });
+    expect(
+      await recoverSession(
+        { ...receipt, code: context.code, token: guest.credentials.token },
+        (credentials) => t.mutation(api.rooms.heartbeat, credentials),
+      ),
+    ).toBeNull();
+    expect(await t.query(api.rooms.read, guest.credentials)).toBeNull();
+    await expect(vote(t, context, guest, 1)).rejects.toThrow(
+      "no longer a member",
+    );
+    const records = await t.run((ctx) => ctx.db.query("rooms").collect());
+    expect(records[0].participants.map((entry) => entry.id)).toEqual([
+      context.hostId,
+      other.memberId,
+    ]);
+    expect(JSON.stringify(records)).not.toContain(guest.memberId);
+  });
+
+  it("does not restore declined applicants or admit disconnected applicants", async () => {
+    const t = newTest(),
+      context = await setup(t, true),
+      guest = await join(t, context),
+      stale = await join(t, context);
+    await t.mutation(api.rooms.admit, {
+      ...context.host,
+      memberId: guest.memberId,
+      allow: false,
+    });
+    expect(await t.mutation(api.rooms.heartbeat, guest.credentials)).toBeNull();
+    vi.setSystemTime(Date.now() + 90_000);
+    await t.mutation(api.rooms.heartbeat, context.host);
+    vi.setSystemTime(Date.now() + 30_000);
+    await expect(
+      t.mutation(api.rooms.admit, {
+        ...context.host,
+        memberId: stale.memberId,
+        allow: true,
+      }),
+    ).rejects.toThrow("disconnected");
+    await t.mutation(internal.cleanup.presence, {});
+    expect((await t.query(api.rooms.read, context.host))?.pending).toEqual([]);
+  });
+
+  it("ends a room with no fresh admitted members, even with a fresh pending applicant", async () => {
+    const t = newTest(),
+      context = await setup(t, true),
+      guest = await join(t, context);
+    vi.setSystemTime(Date.now() + 90_000);
+    await t.mutation(api.rooms.heartbeat, guest.credentials);
+    vi.setSystemTime(Date.now() + 30_000);
+    await expect(join(t, context)).rejects.toThrow("no connected participants");
+    await t.mutation(internal.cleanup.presence, {});
+    expect(await t.run((ctx) => ctx.db.query("rooms").collect())).toEqual([]);
+    expect(await t.mutation(api.rooms.heartbeat, guest.credentials)).toBeNull();
+  });
+
+  it("cleans up legacy room records without a presence index timestamp", async () => {
+    const t = newTest();
+    await setup(t);
+    await t.run(async (ctx) => {
+      const [room] = await ctx.db.query("rooms").collect();
+      await ctx.db.patch(room._id, { presenceCheckAt: undefined });
+    });
+    vi.setSystemTime(Date.now() + PRESENCE_TIMEOUT_MS);
+    await t.mutation(internal.cleanup.presence, {});
+    expect(await t.run((ctx) => ctx.db.query("rooms").collect())).toEqual([]);
+  });
+
+  it("continues presence cleanup across bounded room batches", async () => {
+    const t = newTest();
+    for (let i = 0; i < 11; i++) await setup(t);
+    vi.setSystemTime(Date.now() + PRESENCE_TIMEOUT_MS);
+    await t.mutation(internal.cleanup.presence, {});
+    expect(await t.run((ctx) => ctx.db.query("rooms").collect())).toHaveLength(
+      1,
+    );
+    await vi.advanceTimersByTimeAsync(1);
     await t.finishInProgressScheduledFunctions();
     expect(await t.run((ctx) => ctx.db.query("rooms").collect())).toEqual([]);
   });

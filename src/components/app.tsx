@@ -13,10 +13,18 @@ import {
 } from "@/lib/crypto";
 import { validateConfig } from "@/lib/decks";
 import type { Session } from "@/lib/room";
+import {
+  clearRecovery,
+  readRecovery,
+  saveRecovery,
+  type StoredSession,
+} from "@/lib/session-recovery";
 import { Landing, type CreateOptions } from "./landing";
 import { LiveRoom } from "./live-room";
 import { PracticeRoom } from "./practice-room";
 import { Dialog } from "./dialog";
+import { SessionRecovery } from "./session-recovery";
+import { Brand } from "./brand";
 
 function errorMessage(error: unknown) {
   return error instanceof ConvexError
@@ -35,11 +43,15 @@ export function App() {
       : null,
   );
   const [session, setSession] = useState<Session | null>(null);
+  const [recovery, setRecovery] = useState<StoredSession | null>(null);
+  const [initialized, setInitialized] = useState(false);
   const [practice, setPractice] = useState(false);
   const [invite, setInvite] = useState("");
   const [notice, setNotice] = useState("");
   const finishSession = useCallback(
     (reason?: string) => {
+      clearRecovery();
+      setRecovery(null);
       setSession(null);
       setInvite("");
       setNotice(reason ?? "You’ve left the room.");
@@ -51,6 +63,12 @@ export function App() {
     },
     [client],
   );
+  const beginSession = useCallback((next: Session) => {
+    const recoveryAvailable = saveRecovery(next);
+    setSession({ ...next, recoveryAvailable });
+    setRecovery(null);
+    setInvite("");
+  }, []);
   useEffect(() => {
     const consume = () => {
       const code = new URLSearchParams(window.location.hash.slice(1)).get(
@@ -61,24 +79,33 @@ export function App() {
         setInvite(code);
       }
     };
-    const timer = window.setTimeout(consume, 0);
+    const timer = window.setTimeout(() => {
+      const incoming = new URLSearchParams(window.location.hash.slice(1)).get(
+        "room",
+      );
+      consume();
+      const saved = readRecovery();
+      let sameRoom = !incoming;
+      if (incoming && saved) {
+        try {
+          sameRoom = normalizeRoomCode(incoming) === saved.code;
+        } catch {
+          sameRoom = false;
+        }
+      }
+      if (saved && sameRoom && client) setRecovery(saved);
+      else if (saved) clearRecovery();
+      setInitialized(true);
+    }, 0);
     window.addEventListener("hashchange", consume);
     return () => {
       window.clearTimeout(timer);
       window.removeEventListener("hashchange", consume);
     };
-  }, []);
-  useEffect(() => {
-    if (!session) return;
-    const preventAccidentalExit = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = "";
-    };
-    window.addEventListener("beforeunload", preventAccidentalExit);
-    return () =>
-      window.removeEventListener("beforeunload", preventAccidentalExit);
-  }, [session]);
-  async function credentials(code: string): Promise<Session> {
+  }, [client]);
+  async function credentials(
+    code: string,
+  ): Promise<Omit<Session, "expiresAt" | "recoverUntil">> {
     const normalized = normalizeRoomCode(code);
     return {
       code: normalized,
@@ -93,7 +120,7 @@ export function App() {
     const config = validateConfig(options.config);
     const next = await credentials(generateRoomCode(options.accessMode));
     try {
-      await client.mutation(api.rooms.create, {
+      const presence = await client.mutation(api.rooms.create, {
         accessHash: next.accessHash,
         token: next.token,
         memberId: next.memberId,
@@ -107,8 +134,7 @@ export function App() {
         requireApproval: options.requireApproval,
         role: "voter",
       });
-      setSession(next);
-      setInvite("");
+      beginSession({ ...next, ...presence });
     } catch (error) {
       throw new Error(errorMessage(error));
     }
@@ -117,7 +143,7 @@ export function App() {
     if (!client) throw new Error("Live rooms aren’t available yet.");
     const next = await credentials(code);
     try {
-      await client.mutation(api.rooms.join, {
+      const presence = await client.mutation(api.rooms.join, {
         accessHash: next.accessHash,
         token: next.token,
         memberId: next.memberId,
@@ -128,12 +154,27 @@ export function App() {
         ),
         role: observer ? "observer" : "voter",
       });
-      setSession(next);
-      setInvite("");
+      beginSession({ ...next, ...presence });
     } catch (error) {
       throw new Error(errorMessage(error));
     }
   }
+  if (!initialized)
+    return (
+      <main className="state-screen">
+        <Brand />
+        <p role="status">Opening Quorum…</p>
+      </main>
+    );
+  if (recovery && client)
+    return (
+      <SessionRecovery
+        client={client}
+        record={recovery}
+        onRecovered={beginSession}
+        onExit={finishSession}
+      />
+    );
   if (practice) return <PracticeRoom onExit={() => setPractice(false)} />;
   if (session && client)
     return (

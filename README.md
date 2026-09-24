@@ -8,12 +8,13 @@ An anonymous, end-to-end encrypted estimation app built with Next.js and Convex,
 - Anonymous voter and observer roles; hosts can also observe.
 - 256-bit random invitations or 12-word, 132-bit passphrases. Both have shareable links.
 - Host approval enabled by default, a waiting room, and room locking.
+- Same-tab session recovery, heartbeat-based removal, host removal controls, and automatic host transfer with a room-wide notice.
 - Hidden votes, host-controlled reveal, vote distribution, numeric averages, agreement, and revoting.
 - A queue of up to 30 items, each with a **name and optional link**. No link fetching or previews. Everyone admitted can add items; only the host removes queued items and advances after reveal.
 - Up to 32 admitted people and 32 waiting requests per room.
 - End-to-end encryption of room settings, display names, card labels, item names/links, and votes.
 - Immediate active-record deletion when the host ends the room; automatic 1/2/4/8-hour expiry, plus a cleanup backstop.
-- Purple interface with a three-step room wizard, expandable queue, a two-state room-lock switch, and subtle waiting-request animations with pause and reduced-motion support.
+- Purple interface with a three-step room wizard, expandable queue, a two-state room-lock switch, and subtle waiting-request animations with pause and reduced-motion support. New arrivals have a doorbell with a mute toggle; reveals have a local three-second countdown. The room name appears in the tab title.
 - Responsive layouts, keyboard navigation, accessible dialogs, WCAG 2.2 AA automated checks, and an explicitly labeled, in-memory practice room. See [accessibility verification](docs/ACCESSIBILITY.md) for scope and remaining audit work.
 
 ## Local setup
@@ -57,7 +58,7 @@ pnpm exec convex deploy --cmd-url-env-var-name NEXT_PUBLIC_CONVEX_URL --cmd "pnp
 3. Add the production `CONVEX_DEPLOY_KEY` as a sensitive Vercel **Production-only** variable, scoped to the permissions needed to deploy. Never use a `NEXT_PUBLIC_` prefix for this key.
 4. For Vercel previews, use a separate **Preview** Convex deploy key. Never point previews at production data.
 5. Deploy, then test a host, voter, and observer in separate browser contexts.
-6. Confirm the `Delete expired session data` cron is present and scheduled expiration actually deletes a test room.
+6. Confirm both `Delete expired session data` and `Remove disconnected participants` crons are present. Verify expiry, a refresh within two minutes, timeout/removal, and host transfer in a disposable room.
 
 This follows [Convex’s Vercel deployment workflow](https://docs.convex.dev/production/hosting/vercel). The build injects the correct client URL. `pnpm build` alone verifies the frontend without provisioning or contacting a backend.
 
@@ -72,9 +73,9 @@ pnpm test
 pnpm build
 ```
 
-The unit/integration suite uses the real Convex function definitions with `convex-test` and isolated, in-memory persistence. It tests encrypted storage, cross-client decryption, incorrect keys, tampering, hidden votes, observer restrictions, host authorization, waiting-room isolation, queue progression, stale-round rejection, room locking, leaving, scheduled expiry, and deletion.
+The unit/integration suite uses the real Convex function definitions with `convex-test` and isolated, in-memory persistence. It tests encrypted storage, cross-client decryption, incorrect keys, tampering, hidden votes, observer restrictions, host authorization, waiting-room isolation, queue progression, stale-round rejection, room locking, leaving, scheduled expiry, deletion, presence deadlines, host transfer, participant removal, and session recovery. Storage and synthesized doorbell behavior also have unit coverage.
 
-Browser tests exercise the actual production build, desktop/mobile layouts, voting, queues, admission, observing, dialogs, invitation-fragment consumption, response security headers, and absence of app cookies/web storage. They use an installed Microsoft Edge browser and a local server:
+Browser tests exercise desktop/mobile layouts, voting and countdowns, queues, admission, observing, removal dialogs, invitation-fragment consumption, tab titles, response security headers, and absence of app cookies/web storage in practice mode. Use either the development server or a production preview. Live recovery and host transfer still need multi-browser verification against an operator-configured Convex deployment. Tests use an installed Microsoft Edge browser and a local server:
 
 ```sh
 pnpm start --hostname 127.0.0.1 --port 3100
@@ -106,6 +107,10 @@ Convex stores each room as a single bounded document. Mutations atomically updat
 
 This application provides **ephemeral encrypted rooms**, not an all-infrastructure zero-retention guarantee. Convex persists ciphertext while a room is active. Any room content retained in provider backups remains encrypted and unreadable without the invitation key; the application does not give that key to the operator or providers. Operational metadata is separate. An invitation holder can keep keys or copy content, and deletion cannot revoke those copies. Quorum uses a shared room key, without WhatsApp's identity verification or forward secrecy.
 
-Credentials and plaintext are held in JavaScript memory, with no app cookies, localStorage, sessionStorage, IndexedDB, or persisted room history. Refreshing loses the participant capability and host controls. A host must keep their tab open or end the room explicitly; abandoned rooms expire at their original deadline. No recovery key is stored on the server. Closing a browser tab is not a reliable deletion trigger. Browser/OS swap, crash dumps, extensions, clipboard history, and link-sharing services are outside the app’s control.
+Room content stays in JavaScript memory. The invitation, private participant token, participant ID, and expiry timestamps are stored in **sessionStorage** so a same-tab refresh can restore the existing participant, role, host authority, and current vote. No names, items, votes, or room history are written to browser storage. There are no app cookies, localStorage, or IndexedDB records. Leaving, observed removal, or expiry clears the recovery entry. Closing the tab normally clears it, but browser session restoration can preserve it. Browser/OS swap, crash dumps, extensions, clipboard history, and link-sharing services are outside the app’s control.
 
-There is no enterprise SSO, organization tenancy, host transfer/recovery, device attestation, per-client abuse challenge, or independent security certification. The global creation quota and bounded rooms are resource guards, not comprehensive DoS protection. See the enterprise readiness report before accepting regulated or highly sensitive production data.
+Connected clients heartbeat every 20 seconds, including while waiting for admission. After two minutes without acknowledged presence, a session can no longer read, mutate, or recover. A 30-second Convex cron removes stale participants and their votes, transfers hosting to the longest-present surviving participant, and notifies the room. If no admitted participants remain, it deletes the room. The host can also remove people from **People**. Removal invalidates that participant token; it is not an identity ban or group-key rotation. The original invitation can still be used to request a new session. Closing a tab is not an immediate server deletion trigger, and scheduler outages can delay cleanup.
+
+Deploy the updated Convex schema, functions, and cron alongside the frontend when enabling these features. The frontend relies on presence receipts returned by `create`, `join`, and `heartbeat`; an older backend cannot provide session recovery. Cloud deployment remains an operator step.
+
+There is no enterprise SSO, organization tenancy, device attestation, per-client abuse challenge, or independent security certification. The global creation quota and bounded rooms are resource guards, not comprehensive DoS protection. See the enterprise readiness report before accepting regulated or highly sensitive production data.

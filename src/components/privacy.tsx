@@ -81,9 +81,15 @@ export function Privacy({ onClose }: { onClose: () => void }) {
             keep their own copies.
           </p>
           <p>
-            Keys and access stay in this tab’s memory. Refreshing loses your
-            session and host controls. Keep this tab open, or end the room when
-            you’re done.
+            This tab keeps your invitation and private session credential in
+            browser session storage so a refresh can restore your place. Room
+            content isn’t saved there. Leaving or losing your session clears
+            those credentials; closing the tab normally clears them too.
+          </p>
+          <p>
+            After two minutes without a connection, your participant is removed.
+            If the host disconnects, hosting passes to the longest-present
+            person. The room ends when no participants remain connected.
           </p>
         </div>
       </details>

@@ -10,8 +10,9 @@ Target: [WCAG 2.2 Level AA](https://www.w3.org/TR/WCAG22/). This is an implement
 - Native modal dialogs with initial focus, Tab/Shift+Tab containment, Escape dismissal, and focus return to the opener. Background content is inert while a modal is open.
 - Controls target at least 44 CSS pixels in height; icon buttons are 44 by 44. Radio cards use the full card as the input target.
 - Responsive reflow at 320 CSS pixels, rem-based text, visible labels, and wrapping for room/item names. Primary and secondary button state changes do not animate through low-contrast colors.
-- A slow, subtle waiting-request gradient with a pause/resume button. A new pending participant triggers a single fading ring. Reduced-motion preferences disable the ring and ongoing gradient motion; there is no flashing or automatic sound.
-- Polite voting and pending-request status announcements. Errors use alert semantics. Copy confirmation has a status region.
+- A slow, subtle waiting-request gradient with a pause/resume button. A new pending participant triggers a single fading ring. Reduced-motion preferences disable the ring and ongoing gradient motion; there is no flashing. New requests also trigger a quiet two-note chime lasting under one second, once browser audio is unlocked by interaction. A labeled Arrival sound toggle mutes it. Visual/text announcements remain available independently of audio.
+- Polite voting, pending-request, and host-transfer status announcements. The three-second reveal countdown announces progress without requiring a timed response; voting and progression are disabled during it. Errors use alert semantics. Copy confirmation has a status region.
+- A People dialog lists roles, supports removal confirmation, and moves focus to the non-destructive choice. Removed participants disappear from voting/observer lists. Room names appear in browser tab titles and reset on exit.
 
 ## Automated and browser checks
 

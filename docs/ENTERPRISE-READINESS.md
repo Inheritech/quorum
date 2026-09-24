@@ -27,17 +27,17 @@ Vendor documentation is a starting point, not a substitute for the applicable co
 
 ## Controls implemented
 
-| Control                 | Current behavior                                                                                                                                           |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Content confidentiality | Browser-side AES-GCM; room keys unavailable to either backend. See the construction and threat boundaries in `SECURITY.md`.                                |
-| Minimal identity        | Optional pseudonymous display name only; no email or account. Session tokens are random capabilities, stored hashed.                                       |
-| Admission               | Host approval on by default, pending guest isolation, optional room lock, host-only privileged actions.                                                    |
-| Secret-safe URLs        | Invitation secret in the fragment; no room name, item name, or room identifier in a route or query. Referrers disabled.                                    |
-| No integrations         | Item links are ordinary optional hyperlinks. No link scraping, trackers, analytics, or remote fonts.                                                       |
-| Application retention   | Absolute deadline, scheduled deletion, sweep backstop, host deletion, participant removal, no completed-item or vote history.                              |
-| Client retention        | Memory-held keys and state. No application web storage, cookies, or recovery secrets. Refresh loses host authority.                                        |
-| Hardening               | Script nonce CSP, security headers, bounded payloads and membership, capability checks, round/version checks, encrypted field padding.                     |
-| Verification            | Cryptographic boundary tests, backend authorization/retention integration tests, and desktop/mobile browser tests. No external penetration test performed. |
+| Control                 | Current behavior                                                                                                                                                                                                                                  |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Content confidentiality | Browser-side AES-GCM; room keys unavailable to either backend. See the construction and threat boundaries in `SECURITY.md`.                                                                                                                       |
+| Minimal identity        | Optional pseudonymous display name only; no email or account. Session tokens are random capabilities, stored hashed.                                                                                                                              |
+| Admission               | Host approval on by default, pending guest isolation, optional room lock, host-only privileged actions.                                                                                                                                           |
+| Secret-safe URLs        | Invitation secret in the fragment; no room name, item name, or room identifier in a route or query. Referrers disabled.                                                                                                                           |
+| No integrations         | Item links are ordinary optional hyperlinks. No link scraping, trackers, analytics, or remote fonts.                                                                                                                                              |
+| Application retention   | Absolute deadline, scheduled deletion, sweep backstop, host deletion, participant removal, no completed-item or vote history.                                                                                                                     |
+| Client retention        | Room plaintext stays in memory. Invitation and session capability use tab-scoped sessionStorage for refresh recovery, cleared on leave/observed removal/expiry. Browser restoration may preserve credentials; room name appears in the tab title. |
+| Hardening               | Script nonce CSP, security headers, bounded payloads and membership, capability checks, round/version checks, encrypted field padding.                                                                                                            |
+| Verification            | Cryptographic boundary tests, backend authorization/retention integration tests, and desktop/mobile browser tests. No external penetration test performed.                                                                                        |
 
 ## Required decisions and work before enterprise rollout
 

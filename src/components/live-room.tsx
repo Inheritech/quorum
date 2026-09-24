@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   useConvex,
   useConvexConnectionState,
@@ -13,7 +13,9 @@ import { validateItem } from "@/lib/items";
 import type { Room, RoomActions, Session } from "@/lib/room";
 import { RoomView } from "./room-view";
 import { Brand } from "./brand";
-import { Clock3, LockKeyhole } from "lucide-react";
+import { DoorOpen, LockKeyhole } from "lucide-react";
+import { HEARTBEAT_INTERVAL_MS } from "@/lib/presence";
+import { saveRecovery } from "@/lib/session-recovery";
 
 export function LiveRoom({
   session,
@@ -37,13 +39,26 @@ export function LiveRoom({
   const [decodeError, setDecodeError] = useState(false);
   const [expired, setExpired] = useState(false);
   const [leaveError, setLeaveError] = useState("");
+  const [recoveryAvailable, setRecoveryAvailable] = useState(
+    session.recoveryAvailable ?? true,
+  );
+  const recoveryDeadline = useRef(session.recoverUntil);
+  const ended = useRef(false);
+  const finish = useCallback(
+    (reason?: string) => {
+      if (ended.current) return;
+      ended.current = true;
+      onExit(reason);
+    },
+    [onExit],
+  );
 
   useEffect(() => {
     if (expired || raw === null)
-      onExit(
-        "The room ended, expired, or your request wasn’t approved. Your session has been cleared from this tab.",
+      finish(
+        "The room ended or your participant session was removed. Your saved session has been cleared. Use your invitation to join again.",
       );
-  }, [expired, raw, onExit]);
+  }, [expired, raw, finish]);
 
   useEffect(() => {
     if (!raw) return;
@@ -54,14 +69,75 @@ export function LiveRoom({
     return () => window.clearTimeout(timer);
   }, [raw]);
   useEffect(() => {
-    if (raw?.status !== "ready" || expired) return;
-    const timer = window.setInterval(() => {
-      void heartbeat(credentials).catch(() => {
-        /* The subscription supplies room closure; no sensitive error logging. */
-      });
-    }, 20_000);
-    return () => window.clearInterval(timer);
-  }, [raw?.status, expired, credentials, heartbeat]);
+    if (expired) return;
+    let active = true;
+    let inFlight = false;
+    const expire = () => {
+      if (!active) return;
+      active = false;
+      finish(
+        "Your connection was lost for too long. Use your invitation to join again.",
+      );
+    };
+    let deadline = window.setTimeout(
+      expire,
+      Math.max(0, recoveryDeadline.current - Date.now()),
+    );
+    const renew = async () => {
+      if (
+        !active ||
+        ended.current ||
+        inFlight ||
+        !connection.isWebSocketConnected
+      )
+        return;
+      inFlight = true;
+      try {
+        const receipt = await heartbeat(credentials);
+        if (!active || ended.current) return;
+        if (!receipt || receipt.memberId !== session.memberId) {
+          active = false;
+          window.clearTimeout(deadline);
+          finish(
+            "Your participant session is no longer available. Use your invitation to request access again.",
+          );
+          return;
+        }
+        recoveryDeadline.current = receipt.recoverUntil;
+        setRecoveryAvailable(saveRecovery({ ...session, ...receipt }));
+        window.clearTimeout(deadline);
+        deadline = window.setTimeout(
+          expire,
+          Math.max(0, recoveryDeadline.current - Date.now()),
+        );
+      } catch {
+        /* Retry on the next tick without saving unacknowledged presence. */
+      } finally {
+        inFlight = false;
+      }
+    };
+    void renew();
+    const timer = window.setInterval(() => void renew(), HEARTBEAT_INTERVAL_MS);
+    const visible = () => {
+      if (document.visibilityState === "visible") void renew();
+    };
+    window.addEventListener("online", renew);
+    document.addEventListener("visibilitychange", visible);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.clearTimeout(deadline);
+      window.removeEventListener("online", renew);
+      document.removeEventListener("visibilitychange", visible);
+    };
+  }, [
+    expired,
+    credentials,
+    heartbeat,
+    session,
+    finish,
+    connection.isWebSocketConnected,
+  ]);
   useEffect(() => {
     if (raw?.status !== "ready") return;
     let active = true;
@@ -226,9 +302,15 @@ export function LiveRoom({
         allow,
       });
     },
+    removeMember: async (memberId) => {
+      await client.mutation(api.rooms.removeMember, {
+        ...credentials,
+        memberId,
+      });
+    },
     leave: async () => {
       await client.mutation(api.rooms.leave, credentials);
-      onExit();
+      finish();
     },
   };
   if (expired || raw === null)
@@ -244,7 +326,7 @@ export function LiveRoom({
       <div className="state-screen">
         <Brand />
         <div className="waiting-icon">
-          <Clock3 size={35} />
+          <DoorOpen size={35} />
         </div>
         <div className="eyebrow">ONE MOMENT</div>
         <h1>You’re at the door.</h1>
@@ -259,6 +341,12 @@ export function LiveRoom({
             ? "Waiting for approval"
             : "Reconnecting…"}
         </span>
+        {!recoveryAvailable && (
+          <p role="status">
+            This browser blocked session storage. Refreshing will require a new
+            join request.
+          </p>
+        )}
         {leaveError && (
           <p role="alert" className="form-error">
             {leaveError}
@@ -286,7 +374,7 @@ export function LiveRoom({
         <Brand />
         <h1>We couldn’t open this room.</h1>
         <p>The room data couldn’t be decrypted with this invitation.</p>
-        <button className="button primary" onClick={() => onExit()}>
+        <button className="button primary" onClick={() => finish()}>
           Back to the start
         </button>
       </div>
@@ -306,6 +394,7 @@ export function LiveRoom({
       code={session.code}
       actions={actions}
       connected={connection.isWebSocketConnected && decoded.source === raw}
+      recoveryAvailable={recoveryAvailable}
     />
   );
 }

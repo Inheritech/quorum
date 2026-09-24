@@ -8,6 +8,7 @@ import {
   CircleHelp,
   Copy,
   Crown,
+  DoorOpen,
   ExternalLink,
   Eye,
   Link2,
@@ -23,6 +24,8 @@ import {
   Trash2,
   UnlockKeyhole,
   Users,
+  Volume2,
+  VolumeX,
   X,
 } from "lucide-react";
 import { ConvexError } from "convex/values";
@@ -31,6 +34,10 @@ import type { Room, RoomActions } from "@/lib/room";
 import { Brand } from "./brand";
 import { Dialog } from "./dialog";
 import { Privacy } from "./privacy";
+import { PeopleDialog } from "./people-dialog";
+import { useDoorbell } from "./use-doorbell";
+import { useRevealCountdown } from "./use-reveal-countdown";
+import { AWAY_AFTER_MS } from "@/lib/presence";
 
 const colors = ["peach", "mint", "lilac", "sand", "sky", "rose"];
 export function RoomView({
@@ -40,6 +47,7 @@ export function RoomView({
   actions,
   connected,
   practice = false,
+  recoveryAvailable = true,
 }: {
   room: Room;
   memberId: string;
@@ -47,23 +55,38 @@ export function RoomView({
   actions: RoomActions;
   connected: boolean;
   practice?: boolean;
+  recoveryAvailable?: boolean;
 }) {
   const [modal, setModal] = useState<
-    "invite" | "item" | "leave" | "privacy" | null
+    "invite" | "item" | "leave" | "privacy" | "people" | null
   >(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState("");
   const [queueOpen, setQueueOpen] = useState(false);
   const [attentionPaused, setAttentionPaused] = useState(false);
+  const [dismissedHandoff, setDismissedHandoff] = useState<number | null>(null);
+  const { muted, toggleMuted, ring } = useDoorbell();
+  const { countingDown, remaining, revealed } = useRevealCountdown(
+    room.round,
+    room.revealed,
+  );
   const pendingIds = useRef(new Set<string>());
   const arrivalRing = useRef<HTMLSpanElement>(null);
   const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const previous = document.title;
+    document.title = `${room.config.name} · Quorum`;
+    return () => {
+      document.title = previous;
+    };
+  }, [room.config.name]);
   useEffect(() => {
     const hasArrival = room.pending.some(
       (entry) => !pendingIds.current.has(entry.id),
     );
     pendingIds.current = new Set(room.pending.map((entry) => entry.id));
+    if (hasArrival && memberId === room.hostId) ring();
     if (
       !hasArrival ||
       attentionPaused ||
@@ -78,7 +101,7 @@ export function RoomView({
       { duration: 1200, easing: "ease-out" },
     );
     return () => animation?.cancel();
-  }, [room.pending, attentionPaused]);
+  }, [room.pending, attentionPaused, memberId, room.hostId, ring]);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 15_000);
     return () => window.clearInterval(timer);
@@ -100,7 +123,7 @@ export function RoomView({
     room.config.cards,
     voters.map((member) => member.vote),
   );
-  const disabled = busy || !connected;
+  const disabled = busy || !connected || countingDown;
   const minutes = Math.max(0, Math.ceil((room.expiresAt - now) / 60_000));
   const lifetime =
     minutes >= 60
@@ -174,6 +197,12 @@ export function RoomView({
         <div className="room-header-actions">
           <button
             className="button small secondary"
+            onClick={() => setModal("people")}
+          >
+            <Users size={16} /> People <span>{room.participants.length}</span>
+          </button>
+          <button
+            className="button small secondary"
             onClick={() => setModal("invite")}
           >
             <Link2 size={16} /> Invite people
@@ -223,6 +252,30 @@ export function RoomView({
             </button>
           </div>
         )}
+        {room.hostChangedAt !== null &&
+          room.hostChangedAt !== dismissedHandoff && (
+            <div className="room-notice">
+              <p role="status">
+                {isHost
+                  ? "You’re now the host."
+                  : `${room.participants.find((member) => member.id === room.hostId)?.name ?? "Another participant"} is now the host.`}{" "}
+                The previous host disconnected.
+              </p>
+              <button
+                className="icon-button"
+                aria-label="Dismiss host change"
+                onClick={() => setDismissedHandoff(room.hostChangedAt)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+          )}
+        {!practice && !recoveryAvailable && (
+          <p role="status" className="notice">
+            This browser blocked session storage. Keep this tab open; after a
+            refresh, you’ll need to join again with your invitation.
+          </p>
+        )}
         <p role="status" className="sr-only" aria-atomic="true">
           {isHost && room.pending.length > 0
             ? `${room.pending.length} ${room.pending.length === 1 ? "person is" : "people are"} waiting to join: ${room.pending.map((entry) => entry.name).join(", ")}.`
@@ -254,7 +307,7 @@ export function RoomView({
               </div>
               <p>
                 {currentItem
-                  ? room.revealed
+                  ? revealed
                     ? "The cards are up. Make space for different perspectives."
                     : "Take your time. Your estimate stays hidden until the reveal."
                   : "Add the first item to give everyone something to think about."}
@@ -269,16 +322,16 @@ export function RoomView({
               )}
             </section>
             <section
-              className={`table-area ${room.revealed ? "is-revealed" : ""}`}
+              className={`table-area ${revealed ? "is-revealed" : ""}`}
               aria-label="Voting table"
             >
               <div className="table-seats">
                 {voters.map((member, index) => (
                   <div key={member.id} className="seat">
                     <div
-                      className={`seat-card ${member.hasVoted ? "has-voted" : ""} ${room.revealed ? "flipped" : ""} ${room.revealed && member.vote !== null && room.config.cards[member.vote]?.length > 3 ? "long-label" : ""}`}
+                      className={`seat-card ${member.hasVoted ? "has-voted" : ""} ${revealed ? "flipped" : ""} ${revealed && member.vote !== null && room.config.cards[member.vote]?.length > 3 ? "long-label" : ""}`}
                     >
-                      {room.revealed ? (
+                      {revealed ? (
                         member.vote !== null ? (
                           room.config.cards[member.vote]
                         ) : (
@@ -304,9 +357,9 @@ export function RoomView({
                       {member.id === room.hostId && <Crown size={12} />}
                     </div>
                     <span className="seat-status">
-                      {!practice && now - member.lastSeen > 65_000
-                        ? "Away"
-                        : room.revealed
+                      {!practice && now - member.lastSeen > AWAY_AFTER_MS
+                        ? "Reconnecting…"
+                        : revealed
                           ? member.vote !== null
                             ? "Revealed"
                             : "No vote"
@@ -318,25 +371,34 @@ export function RoomView({
                 ))}
               </div>
               <div className="table-center">
-                <span className="table-logo">q.</span>
+                <span
+                  className={`table-logo ${countingDown ? "reveal-countdown" : ""}`}
+                  aria-hidden="true"
+                >
+                  {countingDown ? remaining : "q."}
+                </span>
                 <div className="table-center-copy">
                   <h3>
-                    {!currentItem
-                      ? "Your next idea belongs here."
-                      : room.revealed
-                        ? summary.consensus
-                          ? "You’re on the same page."
-                          : "Every perspective counts."
-                        : voted === voters.length && voted > 0
-                          ? "All cards are in."
-                          : "A moment to think."}
+                    {countingDown
+                      ? "Here come the cards."
+                      : !currentItem
+                        ? "Your next idea belongs here."
+                        : revealed
+                          ? summary.consensus
+                            ? "You’re on the same page."
+                            : "Every perspective counts."
+                          : voted === voters.length && voted > 0
+                            ? "All cards are in."
+                            : "A moment to think."}
                   </h3>
                   <p aria-live="polite">
-                    {!currentItem
-                      ? "Add an item to begin"
-                      : room.revealed
-                        ? "Time for the conversation"
-                        : `${voted} of ${voters.length} votes are in`}
+                    {countingDown
+                      ? `Revealing in ${remaining}…`
+                      : !currentItem
+                        ? "Add an item to begin"
+                        : revealed
+                          ? "Time for the conversation"
+                          : `${voted} of ${voters.length} votes are in`}
                   </p>
                 </div>
                 {isHost && currentItem && (
@@ -347,11 +409,13 @@ export function RoomView({
                       void run(room.revealed ? actions.next : actions.reveal)
                     }
                   >
-                    {room.revealed
-                      ? room.items.length > 1
-                        ? "Next item"
-                        : "Finish item"
-                      : "Reveal cards"}
+                    {countingDown
+                      ? "Revealing…"
+                      : room.revealed
+                        ? room.items.length > 1
+                          ? "Next item"
+                          : "Finish item"
+                        : "Reveal cards"}
                     {room.revealed ? (
                       <ArrowRight size={17} />
                     ) : (
@@ -385,7 +449,7 @@ export function RoomView({
                 </div>
               )}
             </section>
-            {room.revealed ? (
+            {revealed ? (
               <section className="results-panel">
                 <div className="results-heading">
                   <div>
@@ -551,7 +615,7 @@ export function RoomView({
                 />
                 <div className="panel-heading">
                   <h2>
-                    <Users size={16} /> At the door
+                    <DoorOpen size={20} /> At the door
                   </h2>
                   <span className="count-badge">{room.pending.length}</span>
                   <button
@@ -599,6 +663,17 @@ export function RoomView({
                     </button>
                   </div>
                 ))}
+                <div className="door-controls">
+                  <button
+                    className="button ghost small"
+                    aria-label="Arrival sound"
+                    aria-pressed={!muted}
+                    onClick={toggleMuted}
+                  >
+                    {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}{" "}
+                    Sound {muted ? "off" : "on"}
+                  </button>
+                </div>
               </section>
             )}
             <section className="queue-panel">
@@ -778,6 +853,17 @@ export function RoomView({
         </button>
       </footer>
       {modal === "privacy" && <Privacy onClose={() => setModal(null)} />}
+      {modal === "people" && (
+        <PeopleDialog
+          room={room}
+          memberId={memberId}
+          actions={actions}
+          connected={connected}
+          practice={practice}
+          now={now}
+          onClose={() => setModal(null)}
+        />
+      )}
       {modal === "item" && (
         <Dialog title="What’s up next?" onClose={() => setModal(null)}>
           <p className="dialog-intro">
@@ -886,7 +972,9 @@ export function RoomView({
                 </p>
               </div>
               <p className="form-footnote">
-                Refresh closes your session. Keep this tab open.
+                Refreshing this tab restores your place while your session is
+                active. After two minutes without a connection, you’ll need to
+                join again.
               </p>
               <span className="sr-only" role="status">
                 {copied ? "Invitation copied" : ""}

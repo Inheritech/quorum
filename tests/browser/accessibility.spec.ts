@@ -117,7 +117,14 @@ test("WCAG automated checks cover wizard, join, queue, reveal, and dialogs", asy
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Vote 5", exact: true }).click();
   await page.getByRole("button", { name: "Reveal cards", exact: true }).click();
+  await expect(page.locator(".reveal-countdown")).toBeVisible();
   await checkAccessibility(page);
+  await expect(page.locator(".results-panel")).toBeVisible();
+  await page.getByRole("button", { name: "People 5" }).click();
+  await checkAccessibility(page);
+  await page.getByRole("button", { name: "Remove Alex", exact: true }).click();
+  await checkAccessibility(page);
+  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "End room", exact: true }).click();
   await checkAccessibility(page);
 });
@@ -126,6 +133,9 @@ test("keyboard disclosure and modal focus stay within the active task", async ({
   page,
 }) => {
   await page.goto("/");
+  await expect(
+    page.getByRole("heading", { name: /Good estimates start/ }),
+  ).toBeVisible();
   await page.keyboard.press("Tab");
   await expect(
     page.getByRole("link", { name: "Skip to main content" }),
