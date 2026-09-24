@@ -1,0 +1,10 @@
+packages:
+  - .
+storeDir: .pnpm-store
+cacheDir: .pnpm-cache
+stateDir: .pnpm-state
+managePackageManagerVersions: false
+verifyDepsBeforeRun: false
+allowBuilds:
+  esbuild: true
+  sharp: false

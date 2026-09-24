@@ -1,0 +1,16 @@
+node_modules/
+.next/
+out/
+.env*
+!.env.example
+.pnpm-store/
+.pnpm-cache/
+.pnpm-state/
+.pnpm-home/
+.tmp/
+.firecrawl/
+test-results/
+playwright-report/
+coverage/
+*.tsbuildinfo
+.vercel/

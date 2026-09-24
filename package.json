@@ -1,0 +1,41 @@
+{
+  "name": "quorum",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.19.0",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:browser": "playwright test",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "convex:dev": "convex dev",
+    "deploy:build": "convex deploy --cmd-url-env-var-name NEXT_PUBLIC_CONVEX_URL --cmd \"pnpm build\""
+  },
+  "dependencies": {
+    "@scure/bip39": "2.4.0",
+    "convex": "1.46.0",
+    "lucide-react": "1.48.0",
+    "next": "16.3.6",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@playwright/test": "1.63.0",
+    "@types/node": "26.6.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "convex-test": "0.0.59",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.3.6",
+    "prettier": "3.9.9",
+    "typescript": "5.9.3",
+    "vitest": "5.0.1"
+  }
+}
